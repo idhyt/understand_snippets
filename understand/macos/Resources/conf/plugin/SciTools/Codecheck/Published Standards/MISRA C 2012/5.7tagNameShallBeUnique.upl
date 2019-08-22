@@ -1,0 +1,206 @@
+#This script is designed to run with Understand - CodeCheck
+# Written by Kyle Jackson
+# 10-10-14
+
+
+# Boiler Plate code
+use base ("Understand::Codecheck");
+use strict;
+
+
+# This is the error that will be returned when a violation is found
+use constant ERR1 => "Non unique tag identifier %1 conflicts with entity %2 in file %3 on line %4";
+
+
+# This registers ERR1 with Understand
+sub register_tr_text {
+  my $check = shift;
+  $check->add_tr_text(ERR1);
+}
+
+sub checkID { return "MISRA12_5.7";}
+
+
+
+# This is the short error the Understand will use
+sub name{
+  return '5.7 A tag name shall be a unique identifier';
+}
+
+
+# This is the full description of the rule being tested
+sub description {
+  return "5.7 (Global)( Required ) A tag name shall be a unique identifier.";
+}
+
+
+# This section returns the rational and examples to be given to the user through Understand
+sub detailed_description {
+  return  <<"END_DESC"
+
+<p><b>Amplification</b><br>
+The tag shall be unique across all name spaces and translation units.
+</p>
+
+<p>
+All declarations of the tag shall specify the same type.
+</p>
+
+<p>
+Multiple complete declarations of the same tag are only permitted by this rule if the tag is declared in
+a <i>header file</i> and that <i>header file</i> is included in multiple source files.
+</p>
+
+<p><b>Rationale</b><br>
+Reusing a tag name may lead to developer confusion.
+</p>
+
+<p>
+There is also undefined behaviour associated with reuse of tag names in C90 although this is not
+listed in The Standard's Annex. This undefined behaviour was recognized in C99 as a constraint in
+Section 6.7.2.3.
+</p>
+
+<p><b>Exception</b><br>
+The tag name may be the same as the typedef name with which it is associated.
+</p>
+
+<p><b>Example</b><br>
+</p>
+
+<pre style="margin-top:0;padding-top:0;">
+
+  struct stag
+  {
+    uint16_t a;
+    uint16_t b;
+  };
+
+  struct stag a1 = { 0, 0 };  /* Compliant - compatible with above */
+  union stag a2 = { 0, 0 };   /* Non-compliant - declares different type
+                               * from struct stag.
+                               * Constraint violation in C99 */
+
+</pre>
+
+<p>
+The following example also violates Rule 5.3
+</p>
+
+<pre style="margin-top:0;padding-top:0;">
+
+  struct deer
+  {
+    uint16_t a;
+    uint16_t b;
+  };
+
+  void foo ( void )
+  {
+    struct deer
+    {
+      uint16_t a;
+    };                    /* Non-compliant - tag "deer" reused */
+  }
+
+  typedef struct coord
+  {
+    uint16_t x;
+    uint16_t y;
+  } coord;                /* Compliant by Exception */
+
+  struct elk
+  {
+    uint16_t x;
+  };
+
+  struct elk              /* Non-compliant - declaration of different type
+                           * Constraint violation in C99 */
+  {
+    uint32_t x;
+  };
+
+</pre>
+
+<p><b>See also</b><br>
+Rule 5.6
+</p>
+
+END_DESC
+}
+
+
+# This section defines the programming language this script is testing
+sub test_language {
+  my $language = shift;
+  return $language eq "C++";
+}
+
+
+# This determines if this script is per file
+sub test_entity {
+  return 0;
+}
+
+
+# This determines if this script is per project or per file
+sub test_global {
+  return 1;
+}
+
+
+# Any defined options go here
+sub define_options{
+}
+
+
+# This is the actual test being performed on the user's code
+sub check {
+
+  # Pull the check from understand, retrieve our global entities from the database and check our options
+  my $check = shift;
+  my @tagsDefined = $check->db->ents( 'Struct, Union, Enum' );
+
+  # Start my hash for tracking patterns
+  my %patternsSeen = ();
+
+  foreach my $tag ( @tagsDefined ) {
+
+    # Skip unnamed tags
+    next if $tag->name eq '[unnamed]';
+
+    # Pull references
+    my @defineRefs = $tag->refs ( 'Definein, Declarein' );
+    next unless @defineRefs;
+
+    # If we have more than one define or declare reference, that is an error
+    if ( 0+@defineRefs > 1 ) {
+
+      for ( my $i = 1; $i < 0+@defineRefs; $i++ ) {
+
+        $check->violation( $tag, @defineRefs[0]->file, @defineRefs[0]->line, @defineRefs[0]->column, 
+                           ERR1, $tag->name, @defineRefs[$i]->scope->name, @defineRefs[$i]->file->name, @defineRefs[$i]->line );        
+
+      }
+    }
+
+    # We need a define or a declare reference, don't care which one so we just take the first one
+    my $define = @defineRefs[0];
+    next unless $define;
+
+    # Test if we have seen a tag with the same name
+    if ( exists $patternsSeen{ $define->scope->name } ) {
+
+      # We've seen this name before, throw error
+      my $seenName = $patternsSeen{ $define->scope->name };
+      $check->violation( $tag, $define->file, $define->line, $define->column, 
+                         ERR1, $tag->name, $seenName->scope->name, $seenName->file->name, $seenName->line );
+
+    # Put this tag into the hash for comparison later
+    } else {
+      $patternsSeen{ $define->scope->name } = $define;
+    }
+  }
+
+  
+}
